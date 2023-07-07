@@ -1,16 +1,4 @@
-# Copyright 2022 Southwest Research Institute
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#!/usr/bin/python3
 
 import sys
 import rclpy
@@ -18,6 +6,7 @@ from rclpy.node import Node
 from tf2_ros.buffer import Buffer
 from tf2_ros import TransformListener
 import open3d as o3d
+import open3d.core as o3c
 import numpy as np
 
 from pyquaternion import Quaternion
@@ -34,12 +23,14 @@ from cv_bridge import CvBridge, CvBridgeError
 # OpenCV2 for saving an image
 from visualization_msgs.msg import Marker
 
+
 def filterNormals(mesh, direction, angle):
-   mesh.compute_vertex_normals()
-   tri_normals = np.asarray(mesh.triangle_normals)
-   dot_prods = tri_normals @ direction
-   mesh.remove_triangles_by_mask(dot_prods < np.cos(angle))
-   return mesh
+    mesh.compute_vertex_normals()
+    tri_normals = np.asarray(mesh.triangle_normals)
+    dot_prods = tri_normals @ direction
+    mesh.remove_triangles_by_mask(dot_prods < np.cos(angle))
+    return mesh
+
 
 class IndustrialReconstruction(Node):
 
@@ -60,6 +51,10 @@ class IndustrialReconstruction(Node):
         self.relative_frame = ''
         self.translation_distance = 0.05  # 5cm
         self.rotational_distance = 0.01  # Quaternion Distance
+        self.device_type = 'CPU:0'
+        self.device = None
+        self.intrinsics_t = None
+        self.vbg = None
 
         ####################################################################
         # See Open3d function create_from_color_and_depth for more details #
@@ -78,7 +73,6 @@ class IndustrialReconstruction(Node):
         self.rgb_poses = []
         self.prev_pose_rot = np.array([1.0, 0.0, 0.0, 0.0])
         self.prev_pose_tran = np.array([0.0, 0.0, 0.0])
-
         self.tsdf_integration_data = deque()
         self.integration_done = True
         self.live_integration = False
@@ -90,9 +84,9 @@ class IndustrialReconstruction(Node):
         self.processed_frame_count = 0
         self.reconstructed_frame_count = 0
 
-        self.declare_parameter("depth_image_topic")
-        self.declare_parameter("color_image_topic")
-        self.declare_parameter("camera_info_topic")
+        self.declare_parameter("depth_image_topic", "depth_image_topic")
+        self.declare_parameter("color_image_topic", "color_image_topic" )
+        self.declare_parameter("camera_info_topic", "camera_info_topic")
         self.declare_parameter("cache_count", 10)
         self.declare_parameter("slop", 0.01)
 
@@ -156,7 +150,6 @@ class IndustrialReconstruction(Node):
             write_pose("%s/%06d.pose" % (path_pose, s), self.rgb_poses[s])
             save_intrinsic_as_json(join(path_output, "camera_intrinsic.json"), self.intrinsics)
 
-
     def startReconstructionCallback(self, req, res):
         self.get_logger().info(" Start Reconstruction")
 
@@ -167,6 +160,15 @@ class IndustrialReconstruction(Node):
         self.tsdf_integration_data.clear()
         self.prev_pose_rot = np.array([1.0, 0.0, 0.0, 0.0])
         self.prev_pose_tran = np.array([0.0, 0.0, 0.0])
+
+        # Updating Device attribute cpu-'CPU:0' gpu - 'cuda:0'
+        try:
+            self.device = o3d.core.Device(req.device)
+            self.device_type = req.device
+            self.get_logger().info(" Device has been set with the requested device - %s" % (req.device))
+        except:
+            self.device = o3d.core.Device(self.device_type)
+            self.get_logger().info(" Error setting the device with the requested device. Default device has been set: %s" % self.device_type)
 
         if (req.tsdf_params.min_box_values.x == req.tsdf_params.max_box_values.x and
                 req.tsdf_params.min_box_values.y == req.tsdf_params.max_box_values.y and
@@ -205,11 +207,16 @@ class IndustrialReconstruction(Node):
         self.processed_frame_count = 0
         self.reconstructed_frame_count = 0
 
-        self.tsdf_volume = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=req.tsdf_params.voxel_length,
-            sdf_trunc=req.tsdf_params.sdf_trunc,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
-
+        # Intialize the tensor based reconstruction Here
+        self.vbg = o3d.t.geometry.VoxelBlockGrid(
+            attr_names=('tsdf', 'weight', 'color'),
+            attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+            attr_channels=((1), (1), (3)),
+            voxel_size=3.0 / 512,
+            block_resolution=16,
+            block_count=1000,
+            device=self.device)
+        self.get_logger().info(" Created a voxel brock grid ")
         self.depth_scale = req.rgbd_params.depth_scale
         self.depth_trunc = req.rgbd_params.depth_trunc
         self.convert_rgb_to_intensity = req.rgbd_params.convert_rgb_to_intensity
@@ -225,6 +232,7 @@ class IndustrialReconstruction(Node):
         return res
 
     def stopReconstructionCallback(self, req, res):
+        print("Stopping reconstruction")
         self.get_logger().info("Stop Reconstruction")
         self.record = False
 
@@ -232,16 +240,33 @@ class IndustrialReconstruction(Node):
             self.create_rate(1).sleep()
 
         self.get_logger().info("Generating mesh")
-        if self.tsdf_volume is None:
+        if self.vbg is None:
             res.success = False
             return res
+
         if not self.live_integration:
             while len(self.tsdf_integration_data) > 0:
+
                 data = self.tsdf_integration_data.popleft()
-                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale, self.depth_trunc,
-                                                                          False)
-                self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(data[2]))
-        mesh = self.tsdf_volume.extract_triangle_mesh()
+
+                # Write the block of code for Tensor based Reconstruction
+                image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
+                depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
+                pose_t = o3d.core.Tensor(np.linalg.inv(data[2]), o3d.core.Dtype.Float64)
+
+                frustum_block_coords = self.vbg.compute_unique_block_coordinates(
+                                                                    depth_t,
+                                                                    self.intrinsics_t,
+                                                                    pose_t,
+                                                                    self.depth_scale,
+                                                                    self.depth_trunc)
+
+                self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
+                          self.intrinsics_t, pose_t, self.depth_scale,
+                          self.depth_trunc)
+
+        mesh = self.vbg.extract_triangle_mesh()
+        mesh = mesh.to_legacy()
         mesh.compute_vertex_normals()
 
         if self.crop_mesh:
@@ -251,7 +276,7 @@ class IndustrialReconstruction(Node):
 
         # Mesh filtering
         for norm_filt in req.normal_filters:
-            dir = np.array([norm_filt.normal_direction.x, norm_filt.normal_direction.y, norm_filt.normal_direction.z]).reshape(3,1)
+            dir = np.array([norm_filt.normal_direction.x, norm_filt.normal_direction.y, norm_filt.normal_direction.z]).reshape(3, 1)
             cropped_mesh = filterNormals(cropped_mesh, dir, np.radians(norm_filt.angle))
 
         triangle_clusters, cluster_n_triangles, cluster_area = (cropped_mesh.cluster_connected_triangles())
@@ -261,7 +286,6 @@ class IndustrialReconstruction(Node):
         triangles_to_remove = cluster_n_triangles[triangle_clusters] < req.min_num_faces
         cropped_mesh.remove_triangles_by_mask(triangles_to_remove)
         cropped_mesh.remove_unreferenced_vertices()
-
 
         o3d.io.write_triangle_mesh(req.mesh_filepath, cropped_mesh, False, True)
         mesh_msg = meshToRos(cropped_mesh)
@@ -319,16 +343,34 @@ class IndustrialReconstruction(Node):
                         self.depth_images.append(data[0])
                         self.color_images.append(data[1])
                         self.rgb_poses.append(rgb_pose)
-                        if self.live_integration and self.tsdf_volume is not None:
+
+                        if self.live_integration and self.vbg is not None:
                             self.integration_done = False
                             try:
-                                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale,
-                                                                                          self.depth_trunc, False)
-                                self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
+
+                                # Reconstructions
+                                image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
+                                depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
+                                pose_t = o3d.core.Tensor(np.linalg.inv(rgb_pose), o3d.core.Dtype.Float64)
+
+                                frustum_block_coords = self.vbg.compute_unique_block_coordinates(
+                                                                    depth_t,
+                                                                    self.intrinsics_t,
+                                                                    pose_t,
+                                                                    self.depth_scale,
+                                                                    self.depth_trunc)
+
+                                self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
+                                                    self.intrinsics_t, pose_t, self.depth_scale,
+                                                    self.depth_trunc)
+
                                 self.integration_done = True
                                 self.processed_frame_count += 1
                                 if self.processed_frame_count % 50 == 0:
-                                    mesh = self.tsdf_volume.extract_triangle_mesh()
+
+                                    mesh = self.vgb.extract_triangle_mesh()
+                                    mesh = mesh.to_legacy()
+
                                     if self.crop_mesh:
                                         cropped_mesh = mesh.crop(self.crop_box)
                                     else:
@@ -338,7 +380,7 @@ class IndustrialReconstruction(Node):
                                     mesh_msg.header.frame_id = self.relative_frame
                                     self.mesh_pub.publish(mesh_msg)
                             except:
-                                self.get_logger().error("Error processing images into tsdf")
+                                self.get_logger().error("Error processing images into Mesh")
                                 self.integration_done = True
                                 return
                         else:
@@ -349,6 +391,8 @@ class IndustrialReconstruction(Node):
 
     def cameraInfoCallback(self, camera_info):
         self.intrinsics = getIntrinsicsFromMsg(camera_info)
+        self.intrinsics_t   = o3d.core.Tensor(self.intrinsics.intrinsic_matrix,
+                               o3d.core.Dtype.Float64)
 
 
 def main(args=None):

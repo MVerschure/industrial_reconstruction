@@ -4,6 +4,7 @@ string relative_frame # The frame to recored the tracked_frame pose relative to
 float32 translation_distance # The minimum translation distance in meters required before recording another image
 float32 rotational_distance # The minimum rotational distance required before recording another image
 bool live # Whether or not to do integration live, may cause loss of some data
+string device # Either CUDA:0 or CPU:0
 
 industrial_reconstruction_msgs/TSDFVolumeParams tsdf_params
 industrial_reconstruction_msgs/RGBDImageParams rgbd_params
