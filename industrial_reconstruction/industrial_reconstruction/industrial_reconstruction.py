@@ -249,7 +249,7 @@ class IndustrialReconstruction(Node):
 
                 data = self.tsdf_integration_data.popleft()
 
-                # Write the block of code for Tensor based Reconstruction
+                # Tensor based Reconstruction
                 image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
                 depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
                 pose_t = o3d.core.Tensor(np.linalg.inv(data[2]), o3d.core.Dtype.Float64)
