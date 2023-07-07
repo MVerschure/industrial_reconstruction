@@ -125,7 +125,7 @@ ros2 service call /start_reconstruction industrial_reconstruction_msgs/srv/Start
 relative_frame: 'world'
 translation_distance: 0.0
 rotational_distance: 0.0
-live: true
+live: false
 tsdf_params:
   voxel_length: 0.005
   sdf_trunc: 0.04
