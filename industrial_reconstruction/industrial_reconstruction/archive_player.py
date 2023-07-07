@@ -1,16 +1,4 @@
-# Copyright 2022 Southwest Research Institute
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#!/usr/bin/python3
 
 import rclpy
 from rclpy.node import Node
@@ -38,12 +26,12 @@ class ArchivePlayer(Node):
     def __init__(self):
         super().__init__('industrial_reconstruction_archive_player')
 
-        self.declare_parameter("depth_image_topic")
-        self.declare_parameter("color_image_topic")
-        self.declare_parameter("camera_info_topic")
-        self.declare_parameter("relative_frame")
-        self.declare_parameter("tracking_frame")
-        self.declare_parameter("image_directory")
+        self.declare_parameter("depth_image_topic", "depth_image_topic")
+        self.declare_parameter("color_image_topic", "color_image_topic")
+        self.declare_parameter("camera_info_topic", "camera_info_topic")
+        self.declare_parameter("relative_frame", "relative_frame")
+        self.declare_parameter("tracking_frame", "tracking_frame")
+        self.declare_parameter("image_directory", "image_directory")
         self.declare_parameter("pub_rate")
 
         try:
