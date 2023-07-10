@@ -8,7 +8,7 @@ This package utilizes the Open3D library in Python to create meshes using an RGB
 
 ## Setup
 
-1. Install Open3D > 0.15.0 version required
+1. Install Open3D (Min required version `0.15.0`. tested with `0.17.0` 
     ```
     pip3 install open3d=0.17.0
     ```
