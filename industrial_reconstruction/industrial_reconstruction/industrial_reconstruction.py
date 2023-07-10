@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-# Modifications by Cohesive Robotics 
+# Modifications by Cohesive Robotics
 # Copyright 2022 Southwest Research Institute
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -223,6 +223,12 @@ class IndustrialReconstruction(Node):
         self.reconstructed_frame_count = 0
 
         # Intialize the tensor based reconstruction Here
+        # TODO: Test more to find the values for robust reconstruction.
+
+        # Voxel size is set to 0.005 m as it gave better results for ICP and object detection.
+        # Block count represent number of voxel blocks set aside of scene reconstuction.
+        # Current value is based the on size of the scene. Increase it for bigger scenes.
+        # Block resolution represents the sub voxels in each voxel block.
         self.vbg = o3d.t.geometry.VoxelBlockGrid(
             attr_names=('tsdf', 'weight', 'color'),
             attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
@@ -247,7 +253,7 @@ class IndustrialReconstruction(Node):
         return res
 
     def stopReconstructionCallback(self, req, res):
-        
+
         self.get_logger().info("Stop Reconstruction")
         self.record = False
 
@@ -342,7 +348,6 @@ class IndustrialReconstruction(Node):
                         return
                     rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
                     rgb_r_quat = Quaternion(rgb_r)
-
                     tran_dist = np.linalg.norm(rgb_t - self.prev_pose_tran)
                     rot_dist = Quaternion.absolute_distance(Quaternion(self.prev_pose_rot), rgb_r_quat)
 
