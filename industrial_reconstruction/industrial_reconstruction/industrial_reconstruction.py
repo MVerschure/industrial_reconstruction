@@ -247,7 +247,7 @@ class IndustrialReconstruction(Node):
         return res
 
     def stopReconstructionCallback(self, req, res):
-        print("Stopping reconstruction")
+        
         self.get_logger().info("Stop Reconstruction")
         self.record = False
 
