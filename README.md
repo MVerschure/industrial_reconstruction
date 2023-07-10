@@ -1,6 +1,6 @@
 # Industrial Reconstruction
 
-This package utilizes the Open3D library in Python to create meshes using an RGB-D camera feed. It supports GPU acceleration and utilizes tensors for efficient mesh construction.
+This package utilizes the [Open3D](https://github.com/isl-org/Open3D) library in Python to create meshes using an RGB-D camera feed. It supports GPU acceleration and utilizes tensors for efficient mesh construction.
 
 <p align="center">
 <img src="https://user-images.githubusercontent.com/41449746/171745032-c915a431-0dbd-462d-9020-768ad63ff0f0.GIF" />
