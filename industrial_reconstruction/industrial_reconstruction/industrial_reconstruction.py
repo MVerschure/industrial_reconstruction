@@ -168,7 +168,7 @@ class IndustrialReconstruction(Node):
             self.get_logger().info(" Device has been set with the requested device - %s" % (req.device))
         except:
             self.device = o3d.core.Device(self.device_type)
-            self.get_logger().info(" Error setting the device with the requested device. Default device has been set: %s" % self.device_type)
+            self.get_logger().info("Error setting the device with the requested device. Default device has been set: %s" % self.device_type)
 
         if (req.tsdf_params.min_box_values.x == req.tsdf_params.max_box_values.x and
                 req.tsdf_params.min_box_values.y == req.tsdf_params.max_box_values.y and
