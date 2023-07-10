@@ -165,7 +165,7 @@ class IndustrialReconstruction(Node):
         try:
             self.device = o3d.core.Device(req.device)
             self.device_type = req.device
-            self.get_logger().info(" Device has been set with the requested device - %s" % (req.device))
+            self.get_logger().info("Device has been set with the requested device - %s" % (req.device))
         except:
             self.device = o3d.core.Device(self.device_type)
             self.get_logger().info("Error setting the device with the requested device. Default device has been set: %s" % self.device_type)
