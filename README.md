@@ -45,9 +45,9 @@ tsdf_params:
   min_box_values: {x: 0.05, y: 0.25, z: 0.1}
   max_box_values: {x: 7.0, y: 3.0, z: 1.2}
 rgbd_params: {depth_scale: 1000.0, depth_trunc: 0.75, convert_rgb_to_intensity: false}
-device: 'CPU:0'"
+"
 ```
-To use GPU set device to 'CUDA:0'.
+Package uses GPU by default if available.
 
 Call service to stop reconstruction
 ```
@@ -132,9 +132,8 @@ tsdf_params:
   min_box_values: {x: -0.6, y: 0.2, z: -0.28}
   max_box_values: {x: 0.6, y: 1.0, z: 0.4}
 rgbd_params: {depth_scale: 1000.0, depth_trunc: 0.75, convert_rgb_to_intensity: false}
-device: 'CPU:0'"
+"
 ```
-To use GPU set device to 'CUDA:0'.
 
 Call service to stop reconstruction
 ```
