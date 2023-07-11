@@ -144,6 +144,7 @@ class ArchivePlayer(Node):
     def timerCallback(self):
         if self.publishing:
             self.current_index += 1
+            self.get_logger().info("Publishing %d image of %d images." %(self.current_index, self.num_imgs))
             if self.current_index >= self.num_imgs:
                 self.current_index = 0
             color_index_string = f"{self.current_index:06d}" + ".jpg"

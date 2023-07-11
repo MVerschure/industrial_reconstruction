@@ -66,7 +66,6 @@ class IndustrialReconstruction(Node):
         self.relative_frame = ''
         self.translation_distance = 0.05  # 5cm
         self.rotational_distance = 0.01  # Quaternion Distance
-        self.device_type = 'CPU:0'
         self.device = None
         self.intrinsics_t = None
         self.vbg = None
@@ -176,15 +175,6 @@ class IndustrialReconstruction(Node):
         self.prev_pose_rot = np.array([1.0, 0.0, 0.0, 0.0])
         self.prev_pose_tran = np.array([0.0, 0.0, 0.0])
 
-        # Updating Device attribute cpu-'CPU:0' gpu - 'cuda:0'
-        try:
-            self.device = o3d.core.Device(req.device)
-            self.device_type = req.device
-            self.get_logger().info("Device has been set with the requested device - %s" % (req.device))
-        except:
-            self.device = o3d.core.Device(self.device_type)
-            self.get_logger().info("Error setting the device with the requested device. Default device has been set: %s" % self.device_type)
-
         if (req.tsdf_params.min_box_values.x == req.tsdf_params.max_box_values.x and
                 req.tsdf_params.min_box_values.y == req.tsdf_params.max_box_values.y and
                 req.tsdf_params.min_box_values.z == req.tsdf_params.max_box_values.z):
@@ -223,20 +213,33 @@ class IndustrialReconstruction(Node):
         self.reconstructed_frame_count = 0
 
         # Intialize the tensor based reconstruction Here
-        # TODO: Test more to find the values for robust reconstruction.
-
         # Voxel size is set to 0.005 m as it gave better results for ICP and object detection.
         # Block count represent number of voxel blocks set aside of scene reconstuction.
         # Current value is based the on size of the scene. Increase it for bigger scenes.
-        # Block resolution represents the sub voxels in each voxel block.
-        self.vbg = o3d.t.geometry.VoxelBlockGrid(
-            attr_names=('tsdf', 'weight', 'color'),
-            attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
-            attr_channels=((1), (1), (3)),
-            voxel_size=3.0 / 512,
-            block_resolution=16,
-            block_count=1000,
-            device=self.device)
+        # Block resolution represents the sub voxels in each voxel block. 16 is giving better results for clustering.
+        try:
+            self.vbg = o3d.t.geometry.VoxelBlockGrid(
+                attr_names=('tsdf', 'weight', 'color'),
+                attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+                attr_channels=((1), (1), (3)),
+                voxel_size=req.tsdf_params.voxel_length,
+                block_resolution=16,
+                block_count=10000,
+                device=o3d.core.Device("CUDA:0"))
+            self.get_logger().info("Device used for reconstruction - %s" % ("CUDA:0"))
+            self.device = o3d.core.Device("CUDA:0")
+        except:
+            self.vbg = o3d.t.geometry.VoxelBlockGrid(
+                attr_names=('tsdf', 'weight', 'color'),
+                attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+                attr_channels=((1), (1), (3)),
+                voxel_size=req.tsdf_params.voxel_length,
+                block_resolution=16,
+                block_count=10000,
+                device=o3d.core.Device("CPU:0"))
+            self.get_logger().info("Device used for reconstruction - %s" % ("CPU:0"))
+            self.device = o3d.core.Device("CPU:0")
+
         self.get_logger().info(" Created a voxel brock grid ")
         self.depth_scale = req.rgbd_params.depth_scale
         self.depth_trunc = req.rgbd_params.depth_trunc
@@ -270,21 +273,25 @@ class IndustrialReconstruction(Node):
 
                 data = self.tsdf_integration_data.popleft()
 
-                # Tensor based Reconstruction
-                image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
-                depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
-                pose_t = o3d.core.Tensor(np.linalg.inv(data[2]), o3d.core.Dtype.Float64)
+                # Integrate function throws error when depth of all pixels in the image are more than maximum depth.
+                try:
+                    # Tensor based Reconstruction
+                    image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
+                    depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
+                    pose_t = o3d.core.Tensor(np.linalg.inv(data[2]), o3d.core.Dtype.Float64)
 
-                frustum_block_coords = self.vbg.compute_unique_block_coordinates(
-                                                                    depth_t,
-                                                                    self.intrinsics_t,
-                                                                    pose_t,
-                                                                    self.depth_scale,
-                                                                    self.depth_trunc)
+                    frustum_block_coords = self.vbg.compute_unique_block_coordinates(
+                                                                        depth_t,
+                                                                        self.intrinsics_t,
+                                                                        pose_t,
+                                                                        self.depth_scale,
+                                                                        self.depth_trunc)
 
-                self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
-                          self.intrinsics_t, pose_t, self.depth_scale,
-                          self.depth_trunc)
+                    self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
+                            self.intrinsics_t, pose_t, self.depth_scale,
+                            self.depth_trunc)
+                except:
+                    self.get_logger().info("Error integrating the image")
 
         mesh = self.vbg.extract_triangle_mesh()
         mesh = mesh.to_legacy()
