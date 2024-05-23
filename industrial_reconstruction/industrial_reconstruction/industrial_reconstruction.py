@@ -23,6 +23,7 @@ from tf2_ros import TransformListener
 import open3d as o3d
 import open3d.core as o3c
 import numpy as np
+import cv2
 
 from pyquaternion import Quaternion
 from collections import deque
@@ -58,7 +59,8 @@ class IndustrialReconstruction(Node):
         self.tf_listener = TransformListener(buffer=self.buffer, node=self)
 
         self.tsdf_volume = None
-        self.intrinsics = None
+        self.depth_intrinsics = None
+        self.image_intrinsics = None
         self.crop_box = None
         self.crop_mesh = False
         self.crop_box_msg = Marker()
@@ -67,7 +69,8 @@ class IndustrialReconstruction(Node):
         self.translation_distance = 0.05  # 5cm
         self.rotational_distance = 0.01  # Quaternion Distance
         self.device = None
-        self.intrinsics_t = None
+        self.depth_intrinsics_t = None
+        self.image_intrinsics_t = None
         self.vbg = None
 
         ####################################################################
@@ -100,7 +103,8 @@ class IndustrialReconstruction(Node):
 
         self.declare_parameter("depth_image_topic", "depth_image_topic")
         self.declare_parameter("color_image_topic", "color_image_topic" )
-        self.declare_parameter("camera_info_topic", "camera_info_topic")
+        self.declare_parameter("depth_info_topic", "depth_info_topic")
+        self.declare_parameter("image_info_topic", "image_info_topic")
         self.declare_parameter("cache_count", 10)
         self.declare_parameter("slop", 0.01)
 
@@ -113,9 +117,13 @@ class IndustrialReconstruction(Node):
         except:
             self.get_logger().error("Failed to load color_image_topic parameter")
         try:
-            self.camera_info_topic = str(self.get_parameter('camera_info_topic').value)
+            self.depth_info_topic = str(self.get_parameter('depth_info_topic').value)
         except:
-            self.get_logger().error("Failed to load camera_info_topic parameter")
+            self.get_logger().error("Failed to load depth_info_topic parameter")
+        try:
+            self.image_info_topic = str(self.get_parameter('image_info_topic').value)
+        except:
+            self.get_logger().error("Failed to load image_info_topic parameter")
         try:
             self.cache_count = int(self.get_parameter('cache_count').value)
         except:
@@ -128,7 +136,8 @@ class IndustrialReconstruction(Node):
 
         self.get_logger().info("depth_image_topic - " + self.depth_image_topic)
         self.get_logger().info("color_image_topic - " + self.color_image_topic)
-        self.get_logger().info("camera_info_topic - " + self.camera_info_topic)
+        self.get_logger().info("depth_info_topic - " + self.depth_info_topic)
+        self.get_logger().info("image_info_topic - " + self.image_info_topic)
 
         self.depth_sub = Subscriber(self, Image, self.depth_image_topic)
         self.color_sub = Subscriber(self, Image, self.color_image_topic)
@@ -136,7 +145,8 @@ class IndustrialReconstruction(Node):
                                                allow_headerless)
         self.tss.registerCallback(self.cameraCallback)
 
-        self.info_sub = self.create_subscription(CameraInfo, self.camera_info_topic, self.cameraInfoCallback, 10)
+        self.image_info_sub = self.create_subscription(CameraInfo, self.image_info_topic, self.imageCameraInfoCallback, 10)
+        self.depth_info_sub = self.create_subscription(CameraInfo, self.depth_info_topic, self.depthCameraInfoCallback, 10)
 
         self.mesh_pub = self.create_publisher(Marker, "industrial_reconstruction_mesh", 10)
 
@@ -217,28 +227,28 @@ class IndustrialReconstruction(Node):
         # Block count represent number of voxel blocks set aside of scene reconstuction.
         # Current value is based the on size of the scene. Increase it for bigger scenes.
         # Block resolution represents the sub voxels in each voxel block. 16 is giving better results for clustering.
-        try:
-            self.vbg = o3d.t.geometry.VoxelBlockGrid(
-                attr_names=('tsdf', 'weight', 'color'),
-                attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
-                attr_channels=((1), (1), (3)),
-                voxel_size=req.tsdf_params.voxel_length,
-                block_resolution=16,
-                block_count=10000,
-                device=o3d.core.Device("CUDA:0"))
-            self.get_logger().info("Device used for reconstruction - %s" % ("CUDA:0"))
-            self.device = o3d.core.Device("CUDA:0")
-        except:
-            self.vbg = o3d.t.geometry.VoxelBlockGrid(
-                attr_names=('tsdf', 'weight', 'color'),
-                attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
-                attr_channels=((1), (1), (3)),
-                voxel_size=req.tsdf_params.voxel_length,
-                block_resolution=16,
-                block_count=10000,
-                device=o3d.core.Device("CPU:0"))
-            self.get_logger().info("Device used for reconstruction - %s" % ("CPU:0"))
-            self.device = o3d.core.Device("CPU:0")
+        # try:
+        #     self.vbg = o3d.t.geometry.VoxelBlockGrid(
+        #         attr_names=('tsdf', 'weight', 'color'),
+        #         attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+        #         attr_channels=((1), (1), (3)),
+        #         voxel_size=req.tsdf_params.voxel_length,
+        #         block_resolution=16,
+        #         block_count=10000,
+        #         device=o3d.core.Device("CUDA:0"))
+        #     self.get_logger().info("Device used for reconstruction - %s" % ("CUDA:0"))
+        #     self.device = o3d.core.Device("CUDA:0")
+        # except:
+        self.vbg = o3d.t.geometry.VoxelBlockGrid(
+            attr_names=('tsdf', 'weight', 'color'),
+            attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+            attr_channels=((1), (1), (3)),
+            voxel_size=req.tsdf_params.voxel_length,
+            block_resolution=16,
+            block_count=10000,
+            device=o3d.core.Device("CPU:0"))
+        self.get_logger().info("Device used for reconstruction - %s" % ("CPU:0"))
+        self.device = o3d.core.Device("CPU:0")
 
         self.get_logger().info(" Created a voxel brock grid ")
         self.depth_scale = req.rgbd_params.depth_scale
@@ -297,10 +307,11 @@ class IndustrialReconstruction(Node):
         mesh = mesh.to_legacy()
         mesh.compute_vertex_normals()
 
-        if self.crop_mesh:
-            cropped_mesh = mesh.crop(self.crop_box)
-        else:
-            cropped_mesh = mesh
+        # if self.crop_mesh:
+        #     cropped_mesh = mesh.crop(self.crop_box)
+        # else:
+        #     cropped_mesh = mesh
+        cropped_mesh = mesh
 
         # # Mesh filtering
         # for norm_filt in req.normal_filters:
@@ -340,6 +351,11 @@ class IndustrialReconstruction(Node):
                 # TODO: Generalize image type
                 cv2_depth_img = self.bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
                 cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
+
+                # Resize the images to save computational power
+                # cv2_depth_img = cv2.resize(cv2_depth_img, (0, 0), fx=0.1, fy=0.1)
+                # cvs_rgb_img = cv2.resize(cv2_rgb_img, (0, 0), fx=0.1, fy=0.1)
+
             except CvBridgeError as e:
                 self.get_logger().error("Error converting ros msg to cv img: " + str(e))
                 return
@@ -349,7 +365,7 @@ class IndustrialReconstruction(Node):
 
                 data = self.sensor_data.popleft()
                 try:
-                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, rclpy.time.Time())
+                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])
                 except Exception as e:
                     self.get_logger().error("Failed to get transform: " + str(e))
 
@@ -379,13 +395,13 @@ class IndustrialReconstruction(Node):
 
                         frustum_block_coords = self.vbg.compute_unique_block_coordinates(
                                                             depth_t,
-                                                            self.intrinsics_t,
+                                                            self.depth_intrinsics_t,
                                                             pose_t,
                                                             self.depth_scale,
                                                             self.depth_trunc)
 
-                        self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
-                                            self.intrinsics_t, pose_t, self.depth_scale,
+                        self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.depth_intrinsics_t,
+                                            self.image_intrinsics_t, pose_t, self.depth_scale,
                                             self.depth_trunc)
 
                         self.integration_done = True
@@ -415,9 +431,14 @@ class IndustrialReconstruction(Node):
 
                 self.frame_count += 1
 
-    def cameraInfoCallback(self, camera_info):
-        self.intrinsics = getIntrinsicsFromMsg(camera_info)
-        self.intrinsics_t   = o3d.core.Tensor(self.intrinsics.intrinsic_matrix,
+    def imageCameraInfoCallback(self, camera_info):
+        self.image_intrinsics = getIntrinsicsFromMsg(camera_info)
+        self.image_intrinsics_t   = o3d.core.Tensor(self.image_intrinsics.intrinsic_matrix,
+                               o3d.core.Dtype.Float64)
+
+    def depthCameraInfoCallback(self, camera_info):
+        self.depth_intrinsics = getIntrinsicsFromMsg(camera_info)
+        self.depth_intrinsics_t   = o3d.core.Tensor(self.depth_intrinsics.intrinsic_matrix,
                                o3d.core.Dtype.Float64)
 
 
