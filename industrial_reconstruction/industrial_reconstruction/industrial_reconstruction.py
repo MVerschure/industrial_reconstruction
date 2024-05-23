@@ -302,18 +302,18 @@ class IndustrialReconstruction(Node):
         else:
             cropped_mesh = mesh
 
-        # Mesh filtering
-        for norm_filt in req.normal_filters:
-            dir = np.array([norm_filt.normal_direction.x, norm_filt.normal_direction.y, norm_filt.normal_direction.z]).reshape(3, 1)
-            cropped_mesh = filterNormals(cropped_mesh, dir, np.radians(norm_filt.angle))
+        # # Mesh filtering
+        # for norm_filt in req.normal_filters:
+        #     dir = np.array([norm_filt.normal_direction.x, norm_filt.normal_direction.y, norm_filt.normal_direction.z]).reshape(3, 1)
+        #     cropped_mesh = filterNormals(cropped_mesh, dir, np.radians(norm_filt.angle))
 
-        triangle_clusters, cluster_n_triangles, cluster_area = (cropped_mesh.cluster_connected_triangles())
-        triangle_clusters = np.asarray(triangle_clusters)
-        cluster_n_triangles = np.asarray(cluster_n_triangles)
-        cluster_area = np.asarray(cluster_area)
-        triangles_to_remove = cluster_n_triangles[triangle_clusters] < req.min_num_faces
-        cropped_mesh.remove_triangles_by_mask(triangles_to_remove)
-        cropped_mesh.remove_unreferenced_vertices()
+        # triangle_clusters, cluster_n_triangles, cluster_area = (cropped_mesh.cluster_connected_triangles())
+        # triangle_clusters = np.asarray(triangle_clusters)
+        # cluster_n_triangles = np.asarray(cluster_n_triangles)
+        # cluster_area = np.asarray(cluster_area)
+        # triangles_to_remove = cluster_n_triangles[triangle_clusters] < req.min_num_faces
+        # cropped_mesh.remove_triangles_by_mask(triangles_to_remove)
+        # cropped_mesh.remove_unreferenced_vertices()
 
         o3d.io.write_triangle_mesh(req.mesh_filepath, cropped_mesh, False, True)
         mesh_msg = meshToRos(cropped_mesh)
@@ -333,86 +333,85 @@ class IndustrialReconstruction(Node):
         return res
 
     def cameraCallback(self, depth_image_msg, rgb_image_msg):
+        self.get_logger().info("Received Image")
         if self.record:
             try:
                 # Convert your ROS Image message to OpenCV2
                 # TODO: Generalize image type
                 cv2_depth_img = self.bridge.imgmsg_to_cv2(depth_image_msg, "16UC1")
                 cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
-            except CvBridgeError:
-                self.get_logger().error("Error converting ros msg to cv img")
+            except CvBridgeError as e:
+                self.get_logger().error("Error converting ros msg to cv img: " + str(e))
                 return
             else:
                 self.sensor_data.append(
                     [o3d.geometry.Image(cv2_depth_img), o3d.geometry.Image(cv2_rgb_img), rgb_image_msg.header.stamp])
-                if (self.frame_count > 30):
-                    data = self.sensor_data.popleft()
+
+                data = self.sensor_data.popleft()
+                try:
+                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, rclpy.time.Time())
+                except Exception as e:
+                    self.get_logger().error("Failed to get transform: " + str(e))
+
+                    return
+                rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
+                rgb_r_quat = Quaternion(rgb_r)
+
+                self.prev_pose_tran = rgb_t
+                self.prev_pose_rot = rgb_r
+                rgb_pose = rgb_r_quat.transformation_matrix
+                rgb_pose[0, 3] = rgb_t[0]
+                rgb_pose[1, 3] = rgb_t[1]
+                rgb_pose[2, 3] = rgb_t[2]
+
+                self.depth_images.append(data[0])
+                self.color_images.append(data[1])
+                self.rgb_poses.append(rgb_pose)
+
+                if self.live_integration and self.vbg is not None:
+                    self.integration_done = False
                     try:
-                        gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])
+
+                        # Reconstructions
+                        image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
+                        depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
+                        pose_t = o3d.core.Tensor(np.linalg.inv(rgb_pose), o3d.core.Dtype.Float64)
+
+                        frustum_block_coords = self.vbg.compute_unique_block_coordinates(
+                                                            depth_t,
+                                                            self.intrinsics_t,
+                                                            pose_t,
+                                                            self.depth_scale,
+                                                            self.depth_trunc)
+
+                        self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
+                                            self.intrinsics_t, pose_t, self.depth_scale,
+                                            self.depth_trunc)
+
+                        self.integration_done = True
+                        self.processed_frame_count += 1
+                        self.get_logger().info("Integrated Frame: %d" % self.processed_frame_count)
+                        if self.processed_frame_count % 10 == 0:
+
+                            self.get_logger().info("Processed Frames: %d" % self.processed_frame_count)
+                            mesh = self.vbg.extract_triangle_mesh()
+                            mesh = mesh.to_legacy()
+
+                            if self.crop_mesh:
+                                cropped_mesh = mesh.crop(self.crop_box)
+                            else:
+                                cropped_mesh = mesh
+                            mesh_msg = meshToRos(cropped_mesh)
+                            mesh_msg.header.stamp = self.get_clock().now().to_msg()
+                            mesh_msg.header.frame_id = self.relative_frame
+                            self.mesh_pub.publish(mesh_msg)
                     except Exception as e:
-                        self.get_logger().error("Failed to get transform: " + str(e))
-
+                        self.get_logger().error("Error processing images into Mesh: " + str(e))
+                        self.integration_done = True
                         return
-                    rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
-                    rgb_r_quat = Quaternion(rgb_r)
-                    tran_dist = np.linalg.norm(rgb_t - self.prev_pose_tran)
-                    rot_dist = Quaternion.absolute_distance(Quaternion(self.prev_pose_rot), rgb_r_quat)
-
-                    # TODO: Testing if this is a good practice, min jump to accept data
-                    if (tran_dist >= self.translation_distance) or (rot_dist >= self.rotational_distance):
-                        self.prev_pose_tran = rgb_t
-                        self.prev_pose_rot = rgb_r
-                        rgb_pose = rgb_r_quat.transformation_matrix
-                        rgb_pose[0, 3] = rgb_t[0]
-                        rgb_pose[1, 3] = rgb_t[1]
-                        rgb_pose[2, 3] = rgb_t[2]
-
-                        self.depth_images.append(data[0])
-                        self.color_images.append(data[1])
-                        self.rgb_poses.append(rgb_pose)
-
-                        if self.live_integration and self.vbg is not None:
-                            self.integration_done = False
-                            try:
-
-                                # Reconstructions
-                                image_t = o3d.t.geometry.Image.from_legacy(data[1]).to(self.device)
-                                depth_t = o3d.t.geometry.Image.from_legacy(data[0]).to(self.device)
-                                pose_t = o3d.core.Tensor(np.linalg.inv(rgb_pose), o3d.core.Dtype.Float64)
-
-                                frustum_block_coords = self.vbg.compute_unique_block_coordinates(
-                                                                    depth_t,
-                                                                    self.intrinsics_t,
-                                                                    pose_t,
-                                                                    self.depth_scale,
-                                                                    self.depth_trunc)
-
-                                self.vbg.integrate(frustum_block_coords, depth_t, image_t, self.intrinsics_t,
-                                                    self.intrinsics_t, pose_t, self.depth_scale,
-                                                    self.depth_trunc)
-
-                                self.integration_done = True
-                                self.processed_frame_count += 1
-                                if self.processed_frame_count % 50 == 0:
-
-                                    mesh = self.vgb.extract_triangle_mesh()
-                                    mesh = mesh.to_legacy()
-
-                                    if self.crop_mesh:
-                                        cropped_mesh = mesh.crop(self.crop_box)
-                                    else:
-                                        cropped_mesh = mesh
-                                    mesh_msg = meshToRos(cropped_mesh)
-                                    mesh_msg.header.stamp = self.get_clock().now().to_msg()
-                                    mesh_msg.header.frame_id = self.relative_frame
-                                    self.mesh_pub.publish(mesh_msg)
-                            except:
-                                self.get_logger().error("Error processing images into Mesh")
-                                self.integration_done = True
-                                return
-                        else:
-                            self.tsdf_integration_data.append([data[0], data[1], rgb_pose])
-                            self.processed_frame_count += 1
+                else:
+                    self.tsdf_integration_data.append([data[0], data[1], rgb_pose])
+                    self.processed_frame_count += 1
 
                 self.frame_count += 1
 
