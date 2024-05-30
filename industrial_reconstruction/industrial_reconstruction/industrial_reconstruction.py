@@ -287,6 +287,10 @@ class IndustrialReconstruction(Node):
                 # TODO: Generalize image type
                 cv2_depth_img = self.bridge.imgmsg_to_cv2(depth_image_msg, "32FC1")
                 cv2_depth_img = cv2_depth_img*1000
+                # Preventing NaN values and inf values
+                cv2_depth_img[np.isnan(cv2_depth_img)] = 0
+                cv2_depth_img[np.isinf(cv2_depth_img)] = 65535
+
                 cv2_depth_img = cv2_depth_img.astype(np.uint16)
 
                 # cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
