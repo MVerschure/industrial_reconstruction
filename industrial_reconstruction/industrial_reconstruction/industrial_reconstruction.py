@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import sys
+import time
 import rclpy
 from rclpy.node import Node
 from tf2_ros.buffer import Buffer
@@ -49,7 +50,7 @@ class IndustrialReconstruction(Node):
         self.bridge = CvBridge()
 
         self.buffer = Buffer()
-        self.tf_listener = TransformListener(buffer=self.buffer, node=self)
+        self.tf_listener = TransformListener(buffer=self.buffer, node=self, spin_thread=True)
 
         self.tsdf_volume = None
         self.intrinsics = None
@@ -282,6 +283,7 @@ class IndustrialReconstruction(Node):
 
     def cameraCallback(self, depth_image_msg, rgb_image_msg):
         if self.record and self.intrinsics:
+            self.get_logger().info("Received Image")
             try:
                 # Convert your ROS Image message to OpenCV2
                 # TODO: Generalize image type
@@ -300,18 +302,23 @@ class IndustrialReconstruction(Node):
                 self.get_logger().error("Error converting ros msg to cv img")
                 return
             else:
+                try:
+                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, depth_image_msg.header.stamp, timeout=rclpy.duration.Duration(seconds=2))  
+                except Exception as e:
+                    self.get_logger().error("Failed to get transform: " + str(e))
+                
                 self.sensor_data.append(
-                    [o3d.geometry.Image(cv2_depth_img), o3d.geometry.Image(cv2_rgb_img), rgb_image_msg.header.stamp])
+                    [o3d.geometry.Image(cv2_depth_img), o3d.geometry.Image(cv2_rgb_img), rgb_image_msg.header.stamp, gm_tf_stamped])
 
                 if self.frame_count > 1:
                     data = self.sensor_data.popleft()
-                    try:
-                        gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])  
-                    except Exception as e:
-                        self.get_logger().error("Failed to get transform: " + str(e))
-
-                        return
-                    rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
+                   # try:
+                   #     gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])  
+                   # except Exception as e:
+                   #     self.get_logger().error("Failed to get transform: " + str(e))
+                   #     return
+                        
+                    rgb_t, rgb_r = transformStampedToVectors(data[3])
                     rgb_r_quat = Quaternion(rgb_r)
 
                     tran_dist = np.linalg.norm(rgb_t - self.prev_pose_tran)
@@ -334,6 +341,7 @@ class IndustrialReconstruction(Node):
                             try:
                                 rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale,
                                                                                           self.depth_trunc, False)
+                                self.get_logger().info("Integrating")
                                 self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
                                 self.integration_done = True
                                 self.processed_frame_count += 1
