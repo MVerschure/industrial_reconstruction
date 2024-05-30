@@ -337,7 +337,7 @@ class IndustrialReconstruction(Node):
                                 self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
                                 self.integration_done = True
                                 self.processed_frame_count += 1
-                                if self.processed_frame_count % 50 == 0:
+                                if self.processed_frame_count % 5 == 0:
                                     mesh = self.tsdf_volume.extract_triangle_mesh()
                                     # if self.crop_mesh:
                                     #     cropped_mesh = mesh.crop(self.crop_box)

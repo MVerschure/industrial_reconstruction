@@ -20,12 +20,12 @@ A utility to create meshes using an RGB-D camera feed given known positions and 
 
 Launch reconstruction node
 ```
-ros2 launch industrial_reconstruction reconstruction.launch depth_image_topic:=/camera/depth_image/raw color_image_topic:=/camera/color_image/raw camera_info_topic:=/camera/camera_info
+ros2 launch industrial_reconstruction reconstruction.launch.xml depth_image_topic:=/depth/image color_image_topic:=/raw/left/image camera_info_topic:=/depth/camera_info
 ```
 
 Call service to start reconstruction
 ```
-ros2 service call /start_reconstruction industrial_reconstruction_msgs/srv/StartReconstruction "tracking_frame: 'camera'
+ros2 service call /start_reconstruction industrial_reconstruction_msgs/srv/StartReconstruction "tracking_frame: 'camera_ensenso_optical'
 relative_frame: 'world'
 translation_distance: 0.0
 rotational_distance: 0.0
@@ -33,15 +33,15 @@ live: true
 tsdf_params:
   voxel_length: 0.02
   sdf_trunc: 0.04
-  min_box_values: {x: 0.05, y: 0.25, z: 0.1}
-  max_box_values: {x: 7.0, y: 3.0, z: 1.2}
+  min_box_values: {x: 0.0, y: 0.0, z: 0.0}
+  max_box_values: {x: 2.0, y: 2.0, z: 2.0}
 rgbd_params: {depth_scale: 1000.0, depth_trunc: 0.75, convert_rgb_to_intensity: false}"
 ```
 
 Call service to stop reconstruction
 ```
-ros2 service call /stop_reconstruction industrial_reconstruction_msgs/srv/StopReconstruction "archive_directory: '/home/ros-industrial/industrial_reconstruction_archive/archive'
-mesh_filepath: '/home/ros-industrial/industrial_reconstruction_archive/results_mesh.ply'
+ros2 service call /stop_reconstruction industrial_reconstruction_msgs/srv/StopReconstruction "archive_directory: '/home/ros_ws/active_reconstruction/results/archive'
+mesh_filepath: '/home/ros_ws/active_reconstruction/results/results_mesh.ply'
 normal_filters: [{ normal_direction: {x: 0.0, y: 0.0, z: 1.0}, angle: 90}]
 min_num_faces: 1000"
 ```
