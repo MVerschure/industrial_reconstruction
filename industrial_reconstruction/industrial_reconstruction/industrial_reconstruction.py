@@ -289,8 +289,8 @@ class IndustrialReconstruction(Node):
                 cv2_depth_img = cv2_depth_img*1000
                 cv2_depth_img = cv2_depth_img.astype(np.uint16)
 
-                cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
-                # cv2_rgb_img = 128*np.ones((cv2_depth_img.shape[0], cv2_depth_img.shape[1], 3), dtype=np.uint8)
+                # cv2_rgb_img = self.bridge.imgmsg_to_cv2(rgb_image_msg, rgb_image_msg.encoding)
+                cv2_rgb_img = 128*np.ones((cv2_depth_img.shape[0], cv2_depth_img.shape[1], 3), dtype=np.uint8)
 
             except CvBridgeError:
                 self.get_logger().error("Error converting ros msg to cv img")
