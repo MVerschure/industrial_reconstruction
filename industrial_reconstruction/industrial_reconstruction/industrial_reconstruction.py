@@ -299,56 +299,57 @@ class IndustrialReconstruction(Node):
                 self.sensor_data.append(
                     [o3d.geometry.Image(cv2_depth_img), o3d.geometry.Image(cv2_rgb_img), rgb_image_msg.header.stamp])
 
-                data = self.sensor_data.popleft()
-                try:
-                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, rclpy.time.Time())  
-                except Exception as e:
-                    self.get_logger().error("Failed to get transform: " + str(e))
+                if self.frame_count > 1:
+                    data = self.sensor_data.popleft()
+                    try:
+                        gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, data[2])  
+                    except Exception as e:
+                        self.get_logger().error("Failed to get transform: " + str(e))
 
-                    return
-                rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
-                rgb_r_quat = Quaternion(rgb_r)
+                        return
+                    rgb_t, rgb_r = transformStampedToVectors(gm_tf_stamped)
+                    rgb_r_quat = Quaternion(rgb_r)
 
-                tran_dist = np.linalg.norm(rgb_t - self.prev_pose_tran)
-                rot_dist = Quaternion.absolute_distance(Quaternion(self.prev_pose_rot), rgb_r_quat)
+                    tran_dist = np.linalg.norm(rgb_t - self.prev_pose_tran)
+                    rot_dist = Quaternion.absolute_distance(Quaternion(self.prev_pose_rot), rgb_r_quat)
 
-                # TODO: Testing if this is a good practice, min jump to accept data
-                if (tran_dist >= self.translation_distance) or (rot_dist >= self.rotational_distance):
-                    self.prev_pose_tran = rgb_t
-                    self.prev_pose_rot = rgb_r
-                    rgb_pose = rgb_r_quat.transformation_matrix
-                    rgb_pose[0, 3] = rgb_t[0]
-                    rgb_pose[1, 3] = rgb_t[1]
-                    rgb_pose[2, 3] = rgb_t[2]
+                    # TODO: Testing if this is a good practice, min jump to accept data
+                    if (tran_dist >= self.translation_distance) or (rot_dist >= self.rotational_distance):
+                        self.prev_pose_tran = rgb_t
+                        self.prev_pose_rot = rgb_r
+                        rgb_pose = rgb_r_quat.transformation_matrix
+                        rgb_pose[0, 3] = rgb_t[0]
+                        rgb_pose[1, 3] = rgb_t[1]
+                        rgb_pose[2, 3] = rgb_t[2]
 
-                    self.depth_images.append(data[0])
-                    self.color_images.append(data[1])
-                    self.rgb_poses.append(rgb_pose)
-                    if self.live_integration and self.tsdf_volume is not None:
-                        self.integration_done = False
-                        try:
-                            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale,
-                                                                                      self.depth_trunc, False)
-                            self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
-                            self.integration_done = True
+                        self.depth_images.append(data[0])
+                        self.color_images.append(data[1])
+                        self.rgb_poses.append(rgb_pose)
+                        if self.live_integration and self.tsdf_volume is not None:
+                            self.integration_done = False
+                            try:
+                                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale,
+                                                                                          self.depth_trunc, False)
+                                self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
+                                self.integration_done = True
+                                self.processed_frame_count += 1
+                                if self.processed_frame_count % 50 == 0:
+                                    mesh = self.tsdf_volume.extract_triangle_mesh()
+                                    # if self.crop_mesh:
+                                    #     cropped_mesh = mesh.crop(self.crop_box)
+                                    # else:
+                                    cropped_mesh = mesh
+                                    mesh_msg = meshToRos(cropped_mesh)
+                                    mesh_msg.header.stamp = self.get_clock().now().to_msg()
+                                    mesh_msg.header.frame_id = self.relative_frame
+                                    self.mesh_pub.publish(mesh_msg)
+                            except Exception as e:
+                                self.get_logger().error("Error processing images into tsdf: " + str(e))
+                                self.integration_done = True
+                                return
+                        else:
+                            self.tsdf_integration_data.append([data[0], data[1], rgb_pose])
                             self.processed_frame_count += 1
-                            if self.processed_frame_count % 50 == 0:
-                                mesh = self.tsdf_volume.extract_triangle_mesh()
-                                # if self.crop_mesh:
-                                #     cropped_mesh = mesh.crop(self.crop_box)
-                                # else:
-                                cropped_mesh = mesh
-                                mesh_msg = meshToRos(cropped_mesh)
-                                mesh_msg.header.stamp = self.get_clock().now().to_msg()
-                                mesh_msg.header.frame_id = self.relative_frame
-                                self.mesh_pub.publish(mesh_msg)
-                        except Exception as e:
-                            self.get_logger().error("Error processing images into tsdf: " + str(e))
-                            self.integration_done = True
-                            return
-                    else:
-                        self.tsdf_integration_data.append([data[0], data[1], rgb_pose])
-                        self.processed_frame_count += 1
 
                 self.frame_count += 1
 
