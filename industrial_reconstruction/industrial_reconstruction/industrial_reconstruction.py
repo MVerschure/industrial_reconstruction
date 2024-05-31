@@ -303,7 +303,7 @@ class IndustrialReconstruction(Node):
                 return
             else:
                 try:
-                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, depth_image_msg.header.stamp, timeout=rclpy.duration.Duration(seconds=2))  
+                    gm_tf_stamped = self.buffer.lookup_transform(self.relative_frame, self.tracking_frame, depth_image_msg.header.stamp, timeout=rclpy.duration.Duration(seconds=4))  
                 except Exception as e:
                     self.get_logger().error("Failed to get transform: " + str(e))
                 
