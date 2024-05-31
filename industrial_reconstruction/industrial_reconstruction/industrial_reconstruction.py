@@ -341,8 +341,9 @@ class IndustrialReconstruction(Node):
                             try:
                                 rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(data[1], data[0], self.depth_scale,
                                                                                           self.depth_trunc, False)
-                                self.get_logger().info("Integrating")
+                                self.get_logger().info("Start integrating")
                                 self.tsdf_volume.integrate(rgbd, self.intrinsics, np.linalg.inv(rgb_pose))
+                                self.get_logger().info("Done integrating")
                                 self.integration_done = True
                                 self.processed_frame_count += 1
                                 if self.processed_frame_count % 5 == 0:
